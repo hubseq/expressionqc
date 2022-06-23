@@ -4,8 +4,8 @@ import scipy as sp
 import numpy as np
 from sklearn.decomposition import PCA
 import plotly.express as px
-# sys.path.append('/global_utils/src/')
-sys.path.append('global_utils/src/')
+sys.path.append('/global_utils/src/')
+# sys.path.append('global_utils/src/')
 import module_utils
 from sklearn.preprocessing import StandardScaler
 from scipy import stats
