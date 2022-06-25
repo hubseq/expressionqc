@@ -102,36 +102,49 @@ def scatter_plots_pairwise( x, samples, s1, s2, group_name1, group_name2 ):
     d = dict(zip(list(range(0,len(samples))), samples))    
     
     R_all = []
-    fig, axs = plt.subplots(len(s1), len(s1), figsize=(20, 20))
-    plt.subplots_adjust(left=0.1,
-                        bottom=0.1, 
-                        right=0.9, 
-                        top=0.9,
-                        wspace=0.4, 
-                        hspace=0.4)
-    plt.title('{} vs {}'.format(group_name1, group_name2))
-    for i in range(len(s1)):
-        for j in range(len(s1)):
-            x_new, y_new = remove_low_counts(list(x.iloc[s1[i],:]),list(x.iloc[s2[j],:]))
-            R, P = stats.spearmanr(x_new, y_new)
-            axs[i][j].set_xscale('log')
-            axs[i][j].set_yscale('log')
-            axs[i][j].set_xlabel(d[s1[i]])
-            axs[i][j].set_ylabel(d[s2[j]])
-            axs[i][j].scatter(list(x.iloc[s1[i],:]),list(x.iloc[s2[j],:]))
-            axs[i][j].text(1, 10**5, 'R={}'.format(str(round(R,3))))
-            if j != i:
-                R_all.append(R)
+    if len(s1) > 1 or len(s2) > 1:
+        fig, axs = plt.subplots(len(s1), len(s2), figsize=(20, 20))
+        plt.subplots_adjust(left=0.1,
+                            bottom=0.1, 
+                            right=0.9, 
+                            top=0.9,
+                            wspace=0.4,
+                            hspace=0.4)
+        plt.title('{} vs {}'.format(group_name1, group_name2))
+        for i in range(len(s1)):
+            for j in range(len(s2)):
+                x_new, y_new = remove_low_counts(list(x.iloc[s1[i],:]),list(x.iloc[s2[j],:]))
+                R, P = stats.spearmanr(x_new, y_new)
+                axs[i][j].set_xscale('log')
+                axs[i][j].set_yscale('log')
+                axs[i][j].set_xlabel(d[s1[i]])
+                axs[i][j].set_ylabel(d[s2[j]])
+                axs[i][j].scatter(list(x.iloc[s1[i],:]),list(x.iloc[s2[j],:]))
+                axs[i][j].text(1, 10**5, 'R={}'.format(str(round(R,3))))
+                if j != i:
+                    R_all.append(R)
+    else:
+        # only 1 comparison
+        plt.title('{} vs {}'.format(group_name1, group_name2))
+        x_new, y_new = remove_low_counts(list(x.iloc[s1[0],:]),list(x.iloc[s2[0],:]))
+        R, P = stats.spearmanr(x_new, y_new)
+        plt.xscale('log')
+        plt.yscale('log')
+        plt.xlabel(d[s1[0]])
+        plt.ylabel(d[s2[0]])
+        plt.scatter(list(x.iloc[s1[0],:]),list(x.iloc[s2[0],:]))
+        plt.text(1, 10**5, 'R={}'.format(str(round(R,3))))
+        R_all.append(R)
     plt.savefig('expressionqc.scatter.{}-vs-{}.png'.format(group_name1, group_name2))
-    return np.mean(R)
+    return np.mean(R_all)
 
 
-def ReadsPerGene2Matrix( count_files, count_file_type='STAR', experiment_type='unstranded', output_type='column'):
+def ReadsPerGene2Matrix( count_files, count_file_type='STAR', experiment_type='unstranded'):
     """
     count_file_type: 'STAR', 'salmon', 'featurecounts'
     	which aligner or program was used to generate counts files.
 
-    output_type:                                                                                                   
+    return_type:
     column = each sample has counts in a separate column, like this:
     	gene,sample1,sample2,sample3,...
     	ENSG001,5,8,12,6
@@ -149,6 +162,7 @@ def ReadsPerGene2Matrix( count_files, count_file_type='STAR', experiment_type='u
     	sample1,5,20,...
     	sample2,8,15,...
     
+    NOTE: all types are output as files, but only one is returned for PCA analysis.
     """
     if count_file_type == 'STAR':
         if experiment_type=='unstranded':
@@ -158,37 +172,39 @@ def ReadsPerGene2Matrix( count_files, count_file_type='STAR', experiment_type='u
         elif experiment_type=='reverse-stranded':
             WHICH_COL = 3
         
-    counts_matrix_dict = {}
-    genes = []
-    samples = []
-    firstFile = True
-    for cf in count_files:
-        print('Parsing {}'.format(str(cf)))
-        if count_file_type == 'STAR':
-            with open(cf,'r') as f:
-                samplename = str(cf.split('/')[-1]).split('.')[0]
-                samples.append(samplename)
-                for r in f:
-                    rt = r.rstrip(' \t\n').split('\t')
-                    if r[0:2] != 'N_':
-                        if output_type == 'column':
-                            if firstFile == True:
-                                genes.append(rt[0])
-                                counts_matrix_dict[rt[0]] = [rt[WHICH_COL]]  # gene: counts for each sample
-                            else:
-                                counts_matrix_dict[rt[0]] += [rt[WHICH_COL]]                                    
-                        elif output_type == 'transpose' or output_type in ['tallskinny', 'stacked']:
-                            if firstFile == True:
-                                genes.append(rt[0])
-                            if samplename not in counts_matrix_dict:
-                                counts_matrix_dict[samplename] = [rt[WHICH_COL]]  # sample: counts for each gene
-                            else:
-                                counts_matrix_dict[samplename] += [rt[WHICH_COL]]                                
+    for output_type in ['column','transpose','stacked']:
+        counts_matrix_dict = {}
+        genes = []
+        samples = []
+        firstFile = True        
+        for cf in count_files:
+            print('Parsing {}'.format(str(cf)))
+            if count_file_type == 'STAR':
+                with open(cf,'r') as f:
+                    samplename = str(cf.split('/')[-1]).split('.')[0]
+                    samples.append(samplename)
+                    for r in f:
+                        rt = r.rstrip(' \t\n').split('\t')
+                        if r[0:2] != 'N_':
+                            if output_type == 'column':
+                                if firstFile == True:
+                                    genes.append(rt[0])
+                                    counts_matrix_dict[rt[0]] = [rt[WHICH_COL]]  # gene: counts for each sample
+                                else:
+                                    counts_matrix_dict[rt[0]] += [rt[WHICH_COL]]
+                            elif output_type == 'transpose' or output_type in ['tallskinny', 'stacked']:
+                                if firstFile == True:
+                                    genes.append(rt[0])
+                                # sample: counts for each gene                                    
+                                if samplename not in counts_matrix_dict:
+                                    counts_matrix_dict[samplename] = [rt[WHICH_COL]]  
+                                else:
+                                    counts_matrix_dict[samplename] += [rt[WHICH_COL]]
                 firstFile = False
-        
-        with open('expressionqc.counts_matrix.csv','w') as fout:
+            
+        with open('expressionqc.counts_matrix.{}.csv'.format(output_type),'w') as fout:
             if output_type == 'column':
-                fout.write('gene\{}\n'.format(','.join(samples)))
+                fout.write('gene,{}\n'.format(','.join(samples)))
                 for gene, counts in counts_matrix_dict.items():
                     fout.write('{},{}\n'.format(gene, ','.join(counts)))
             elif output_type == 'transpose':
@@ -196,11 +212,12 @@ def ReadsPerGene2Matrix( count_files, count_file_type='STAR', experiment_type='u
                 for sample, counts in counts_matrix_dict.items():
                     fout.write('{},{}\n'.format(sample,','.join(counts)))
             elif output_type in ['tallskinny', 'stacked']:
-                fout.write('sample\ngene\ncount\n')
+                fout.write('sample,gene,count\n')
                 for sample, counts in counts_matrix_dict.items():
-                    for c in counts:
-                        fout.write('{},{},{}\n'.format(sample,genes.index(counts.index(c)),str(c)))
-    return 'expressionqc.counts_matrix.csv', samples
+                    for i in range(0,len(counts)):
+                        fout.write('{},{},{}\n'.format(sample,genes[i],str(counts[i])))
+    
+    return 'expressionqc.counts_matrix.transpose.csv', samples
 
 
 def runPCA( counts_json, samples, groups ):
@@ -306,7 +323,8 @@ def createScatterPlots( counts, samples, groups ):
         # append the last group
         if i >= len(groups)-1:
             within_group_comps.append(new_group_list)
-    
+
+    print('WITHIN GROUP COMPS: {}'.format(str(within_group_comps)))
     # within group scatter plots
     for within_group_indexes in within_group_comps:
         if len(within_group_indexes) > 1:
@@ -324,6 +342,23 @@ def createScatterPlots( counts, samples, groups ):
     
     return
 
+
+def outputSampleGroupMetadata( samples, groups ):
+    """ Creates a CSV containing samples and their groups
+    """
+    if type(samples)!=type([]) or type(groups)!=type([]) or len(samples) != len(groups):
+        out_name = ''
+        print('ERROR in outputSampleGroupMetadata(): samples and groups lists not the same length.')
+        print('SAMPLES: {}'.format(str(samples)))
+        print('GROUPS: {}'.format(str(groups)))
+    else:
+        out_name = 'expressionqc.samplegroups.csv'
+        with open(out_name,'w') as fout:
+            fout.write('sample_id,group\n')
+            for i in range(0,len(samples)):
+                fout.write('{},{}\n'.format(str(samples[i]), str(groups[i])))
+    return out_name
+        
         
 def run_expressionqc( arg_list ):
     """
@@ -345,14 +380,17 @@ def run_expressionqc( arg_list ):
     if count_file_type == '':
         count_file_type = 'STAR' # default
     print('here3')        
-    if groups == []:
+    if groups == [] or groups == '':
         groups = list(map(str,list(range(1,len(input_args)+1))))
-    print('here4')        
+    print('here4: GROUPS {}'.format(str(groups)))
     if input_args != []:
-        matrix_file, samples = ReadsPerGene2Matrix( input_args, count_file_type, 'unstranded', 'transpose' )
+        matrix_file, samples = ReadsPerGene2Matrix( input_args, count_file_type, 'unstranded' )
 
+        # output samples and groups as a metadata file
+        outputSampleGroupMetadata( samples, groups )
+        
         ### Create counts matrix ###
-        print('here5')
+        print('here5: SAMPLES {}'.format(str(samples)))
         df_counts_matrix = pd.read_csv(matrix_file)
         print(df_counts_matrix)
     
