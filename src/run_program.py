@@ -11,6 +11,8 @@ from sklearn.preprocessing import StandardScaler
 from scipy import stats
 import plotly.figure_factory as ff
 import matplotlib.pyplot as plt
+from io import BytesIO
+import base64
 
 def array2matrix( array1d, dim ):
     """ Converts 1D array of values to a 2D matrix of size (dim, dim). 
@@ -65,7 +67,7 @@ def correlation_heatmap( x, s, cscale, samples ):
         height=600)
     fig.write_image('expressionqc.correlation_heatmap.png')
     
-    return R_matrix
+    return R_matrix, fig
 
 
 def scatter_plots( x, samples, s, group_name ):
@@ -95,7 +97,7 @@ def scatter_plots( x, samples, s, group_name ):
                 if j != i:
                     R_all.append(R)
     plt.savefig('expressionqc.scatter.{}.png'.format(group_name))
-    return np.mean(R_all)
+    return np.mean(R_all), plt
 
 
 def scatter_plots_pairwise( x, samples, s1, s2, group_name1, group_name2 ):
@@ -136,7 +138,7 @@ def scatter_plots_pairwise( x, samples, s1, s2, group_name1, group_name2 ):
         plt.text(1, 10**5, 'R={}'.format(str(round(R,3))))
         R_all.append(R)
     plt.savefig('expressionqc.scatter.{}-vs-{}.png'.format(group_name1, group_name2))
-    return np.mean(R_all)
+    return np.mean(R_all), plt
 
 
 def ReadsPerGene2Matrix( count_files, count_file_type='STAR', experiment_type='unstranded'):
@@ -303,10 +305,12 @@ def runPCA( counts_json, samples, groups ):
     fig2.update_traces(textposition='top center', marker_size=10)
     fig2.write_image("counts_pca_3d.png")
     
-    return
+    return fig, fig2
 
 
 def createScatterPlots( counts, samples, groups ):
+    # scatter plot figure objects
+    plotfigs = []
     # get within group comparisons
     within_group_comps = []
     new_group_list = []
@@ -328,19 +332,22 @@ def createScatterPlots( counts, samples, groups ):
     # within group scatter plots
     for within_group_indexes in within_group_comps:
         if len(within_group_indexes) > 1:
-            R_avg = scatter_plots( counts, samples, within_group_indexes, groups[within_group_indexes[0]] )
-
+            R_avg, plotfig = scatter_plots( counts, samples, within_group_indexes, groups[within_group_indexes[0]] )
+            plotfigs.append([plotfig, 'matplotplib'])
+    
     # cross group scatter plots
     for i in range(0,len(within_group_comps)):
         for j in range(i,len(within_group_comps)):
             if j > i:
-                R_avg = scatter_plots_pairwise( counts, samples, within_group_comps[i], within_group_comps[j], \
+                R_avg, plotfig = scatter_plots_pairwise( counts, samples, within_group_comps[i], within_group_comps[j], \
                                                 groups[within_group_comps[i][0]], groups[within_group_comps[j][0]] )
-
-    # correlation heatmap
-    R_matrix = correlation_heatmap( counts, list(range(0,len(samples))), 'hot', samples )
+                plotfigs.append([plotfig, 'matplotlib'])
     
-    return
+    # correlation heatmap
+    R_matrix, plotfig = correlation_heatmap( counts, list(range(0,len(samples))), 'hot', samples )
+    plotfigs.append([plotfig, 'plotly'])
+
+    return plotfigs
 
 
 def outputSampleGroupMetadata( samples, groups ):
@@ -358,8 +365,33 @@ def outputSampleGroupMetadata( samples, groups ):
             for i in range(0,len(samples)):
                 fout.write('{},{}\n'.format(str(samples[i]), str(groups[i])))
     return out_name
-        
-        
+
+def add_image_to_html( p, p_type ):
+    """ Given <plot_figure> and <plot_type>, returns an img src tag with embedded image
+    """
+    imgfile = BytesIO()
+    if p_type == 'plotly':
+        p.write_image(imgfile, format='png') # matplotlib is savefig
+    elif p_type == 'matplotlib':
+        p.savefig(imgfile)        
+    encoded = base64.b64encode(imgfile.getvalue()).decode('utf-8')
+    img_tag = '<img src=\'data:image/png;base64,{}\'>'.format(encoded) + '<br>'
+    return img_tag
+
+
+def plots_to_html( plots_object_list, html_outname ):
+    """ Given a list of plot objects (plotly or matplotlib), outputs these plots to an HTML
+    """
+    img_tags = ''
+    with open(html_outname,'w') as f:
+        for p_tuple in plots_object_list:
+            img_tags += add_image_to_html( p_tuple[0], p_tuple[1] )
+    html = '<html><body>' + img_tags + '</body></html>'
+    with open( html_outname, 'w' ) as f:
+        f.write(html)
+    return
+
+
 def run_expressionqc( arg_list ):
     """
     Parameters:
@@ -367,12 +399,14 @@ def run_expressionqc( arg_list ):
     -groups <groups>
     -o <output_dir>
     -type <STAR or featurecounts or salmon>
+    -name <base name for plots> : default expressionqc
     """
     print('ARG LIST: {}'.format(str(arg_list)))
     input_args = module_utils.getArgument( arg_list, '-i', 'list' )
     output_dir = module_utils.getArgument( arg_list, '-o', 'list' )
-    groups = module_utils.getArgument( arg_list, '-groups', 'list' )
+    groups = module_utils.getArgument( arg_list, '-groups', 'implicit' )
     count_file_type = module_utils.getArgument( arg_list, '-type' )
+    base_name = module_utils.getArgument( arg_list, '-name', 'implicit', 'expressionqc' )
     print('here1')
     if output_dir != []:
         os.chdir( output_dir[0] )
@@ -381,7 +415,13 @@ def run_expressionqc( arg_list ):
         count_file_type = 'STAR' # default
     print('here3')        
     if groups == [] or groups == '':
-        groups = list(map(str,list(range(1,len(input_args)+1))))
+        # default: group1, group2, group3, etc...
+        groups = []
+        for i in range(1,len(input_args)+1):
+            groups.append('group{}'.format(str(i)))
+    elif type(groups) == str and ',' in groups:
+        groups = groups.replace(' ','').split(',')
+        
     print('here4: GROUPS {}'.format(str(groups)))
     if input_args != []:
         matrix_file, samples = ReadsPerGene2Matrix( input_args, count_file_type, 'unstranded' )
@@ -403,12 +443,16 @@ def run_expressionqc( arg_list ):
         features = list(df_counts_matrix.columns)[1:]
 
         # run PCA
-        runPCA( {'counts': counts, 'target': target, 'features': features}, samples, groups )
+        plot_pca2d, plot_pca3d = runPCA( {'counts': counts, 'target': target, 'features': features}, samples, groups )
+        
         print('here6')
 
         # create scatter plots
-        createScatterPlots( counts, samples, groups )
-        
+        plot_scatterplots_list = createScatterPlots( counts, samples, groups )
+
+        # output all plots to HTML
+        plots_to_html( [[plot_pca2d, 'plotly']] + [[plot_pca3d, 'plotly']] + plot_scatterplots_list, \
+                       os.path.join(output_dir[0], base_name + '.plots.html'))
     return
 
 if __name__ == '__main__':
